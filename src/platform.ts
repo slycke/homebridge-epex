@@ -73,7 +73,7 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
     // Check if the API key is present in the config
     if (!this.config.apiKey || this.config.apiKey.trim() === '') {
       this.log.warn('ENTSO-E API key is missing. Cannot fetch energy price data.');
-      this.setCurrentPrice(this.config.max_rate || 100); // Set to a fallback value
+      this.setCurrentPrice(this.config.max_price || 100); // Set to a fallback value
       this.updateAccessories();
       return;
     }
