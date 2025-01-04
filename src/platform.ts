@@ -84,7 +84,12 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
       const startDate = this.toEntsoeDateString(now);
       const endDate = this.toEntsoeDateString(new Date(now.getTime() + 60 * 60 * 1000));
 
-      const url = `https://web-api.tp.entsoe.eu/api?documentType=${this.config.documentType || 'A44'}&in_Domain=${this.config.in_Domain || '10YNL----------L'}&out_Domain=${this.config.out_Domain || '10YNL----------L'}&periodStart=${startDate}&periodEnd=${endDate}`;
+      const url = 'https://web-api.tp.entsoe.eu/api' +
+        `?documentType=${this.config.documentType || 'A44'}` +
+        `&in_Domain=${this.config.in_Domain || '10YNL----------L'}` +
+        `&out_Domain=${this.config.out_Domain || '10YNL----------L'}` +
+        `&periodStart=${startDate}` +
+        `&periodEnd=${endDate}`;
 
       this.log.debug('Fetching data from ENTSO-E:', url);
 
