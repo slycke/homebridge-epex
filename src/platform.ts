@@ -3,6 +3,8 @@ import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAcces
 import { EPEXPlatformAccessory } from './platformAccessory.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
+import axios from 'axios';
+import { parseStringPromise } from 'xml2js';
 /**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
@@ -16,6 +18,17 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
   public readonly discoveredCacheUUIDs: string[] = [];
 
+  private currentPrice: number | null = null;
+  private timer?: NodeJS.Timeout;
+
+  // Add a getter and setter for currentPrice
+  public getCurrentPrice(): number | null {
+    return this.currentPrice;
+  }
+  private setCurrentPrice(price: number): void {
+    this.currentPrice = price;
+  }
+
   constructor(
     public readonly log: Logging,
     public readonly config: PlatformConfig,
@@ -24,7 +37,8 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
 
-    this.log.debug('Finished initializing platform:', this.config.name);
+    this.log.debug('Finished initializing EPEX platform:', this.config.name);
+    this.log.info('EPEXMonitor initialized.');
 
     // When this event is fired it means Homebridge has restored all cached accessories from disk.
     // Dynamic Platform plugins should only register new accessories after this event was fired,
@@ -32,99 +46,142 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
     // to start discovery of new accessories.
     this.api.on('didFinishLaunching', () => {
       log.debug('Executed didFinishLaunching callback');
+      this.log.info('Starting EPEXMonitor...');
+      this.startPolling();
       // run the method to discover / register your devices as accessories
       this.discoverDevices();
     });
   }
+  /**
+* Poll the ENTSO-E API periodically for energy price data.
+*/
+  private startPolling() {
+    const interval = (this.config.refreshInterval || 15) * 60 * 1000;
+    this.pollEPEXPrice(); // Initial fetch
+
+    this.timer = setInterval(() => {
+      this.pollEPEXPrice();
+    }, interval);
+
+    this.log.info(`Polling initialized. Interval: ${interval / 60000} minutes.`);
+  }
 
   /**
-   * This function is invoked when homebridge restores cached accessories from disk at startup.
-   * It should be used to set up event handlers for characteristics and update respective values.
+ * Fetch price data from the ENTSO-E API.
+ */
+  private async pollEPEXPrice() {
+    // Check if the API key is present in the config
+    if (!this.config.apiKey || this.config.apiKey.trim() === '') {
+      this.log.warn('ENTSO-E API key is missing. Cannot fetch energy price data.');
+      this.setCurrentPrice(this.config.max_rate || 100); // Set to a fallback value
+      this.updateAccessories();
+      return;
+    }
+    try {
+      const now = new Date();
+      now.setUTCMinutes(0, 0, 0);
+
+      const startDate = this.toEntsoeDateString(now);
+      const endDate = this.toEntsoeDateString(new Date(now.getTime() + 60 * 60 * 1000));
+
+      const url = `https://web-api.tp.entsoe.eu/api?documentType=${this.config.documentType || 'A44'}&in_Domain=${this.config.in_Domain || '10YNL----------L'}&out_Domain=${this.config.out_Domain || '10YNL----------L'}&periodStart=${startDate}&periodEnd=${endDate}`;
+
+      this.log.debug('Fetching data from ENTSO-E:', url);
+
+      const response = await axios.get(url, {
+        headers: { 'X-Api-Key': this.config.apiKey || '' },
+      });
+
+      const price = await this.parseEPEXResponse(response.data);
+      this.setCurrentPrice(price);
+
+      this.log.info(`Fetched price: ${price}`);
+      this.updateAccessories();
+    } catch (error) {
+      this.log.error('Error fetching or parsing ENTSO-E data:', error);
+    }
+  }
+
+  /**
+* Parse the ENTSO-E API response to extract the price.
+*/
+  private async parseEPEXResponse(data: string): Promise<number> {
+    const result = await parseStringPromise(data, { explicitArray: false });
+    const timeSeries = result?.Publication_MarketDocument?.TimeSeries;
+
+    if (timeSeries) {
+      const period = Array.isArray(timeSeries.Period) ? timeSeries.Period[0] : timeSeries.Period;
+      const points = Array.isArray(period.Point) ? period.Point : [period.Point];
+
+      const price = parseFloat(points[0]?.['price.amount'] || '0');
+      return isNaN(price) ? 0 : price;
+    }
+
+    return 0;
+  }
+
+  /**
+   * Convert a date to the ENTSO-E required format (YYYYMMDDHHmm).
+   */
+  private toEntsoeDateString(date: Date): string {
+    return date.toISOString().replace(/[-:]/g, '').slice(0, 12) + '00';
+  }
+
+  /**
+   * Notify accessories of the updated price.
+   */
+  private updateAccessories() {
+    for (const accessory of this.accessories.values()) {
+      // Create or retrieve the EPEXPlatformAccessory instance
+      const epexAccessory = accessory.context.epexHandler || new EPEXPlatformAccessory(this, accessory);
+
+      // Store the handler in the accessory context to avoid recreating it
+      accessory.context.epexHandler = epexAccessory;
+
+      // Update the price using the currentPrice property
+      if (this.currentPrice !== null) {
+        epexAccessory.updatePrice(this.currentPrice);
+      } else {
+        this.log.warn(`No current price available to update accessory: ${accessory.displayName}`);
+      }
+    }
+  }
+
+
+  /**
+   * Restore cached accessories.
    */
   configureAccessory(accessory: PlatformAccessory) {
     this.log.info('Loading accessory from cache:', accessory.displayName);
-
-    // add the restored accessory to the accessories cache, so we can track if it has already been registered
     this.accessories.set(accessory.UUID, accessory);
   }
 
   /**
-   * This is an example method showing how to register discovered accessories.
-   * Accessories must only be registered once, previously created accessories
-   * must not be registered again to prevent "duplicate UUID" errors.
+   * Discover and register accessories.
    */
-  discoverDevices() {
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
+  private discoverDevices() {
     const exampleDevices = [
-      {
-        exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'Bedroom',
-      },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Kitchen',
-      },
+      { id: 'PriceMonitor1', name: 'EPEX Price Monitor' },
     ];
 
-    // loop over the discovered devices and register each one if it has not already been registered
     for (const device of exampleDevices) {
-      // generate a unique id for the accessory this should be generated from
-      // something globally unique, but constant, for example, the device serial
-      // number or MAC address
-      const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
+      const uuid = this.api.hap.uuid.generate(device.id);
 
-      // see if an accessory with the same uuid has already been registered and restored from
-      // the cached devices we stored in the `configureAccessory` method above
       const existingAccessory = this.accessories.get(uuid);
-
       if (existingAccessory) {
-        // the accessory already exists
-        this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-
-        // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. e.g.:
-        // existingAccessory.context.device = device;
-        // this.api.updatePlatformAccessories([existingAccessory]);
-
-        // create the accessory handler for the restored accessory
-        // this is imported from `platformAccessory.ts`
+        this.log.info('Restoring accessory:', existingAccessory.displayName);
         new EPEXPlatformAccessory(this, existingAccessory);
-
-        // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, e.g.:
-        // remove platform accessories when no longer present
-        // this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
-        // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
       } else {
-        // the accessory does not yet exist, so we need to create it
-        this.log.info('Adding new accessory:', device.exampleDisplayName);
+        this.log.info('Adding new accessory:', device.name);
 
-        // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
-
-        // store a copy of the device object in the `accessory.context`
-        // the `context` property can be used to store any data about the accessory you may need
+        const accessory = new this.api.platformAccessory(
+          device.name || 'Unnamed Accessory', // Add a fallback name here
+          uuid,
+        );
         accessory.context.device = device;
 
-        // create the accessory handler for the newly create accessory
-        // this is imported from `platformAccessory.ts`
         new EPEXPlatformAccessory(this, accessory);
-
-        // link the accessory to your platform
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      }
-
-      // push into discoveredCacheUUIDs
-      this.discoveredCacheUUIDs.push(uuid);
-    }
-
-    // you can also deal with accessories from the cache which are no longer present by removing them from Homebridge
-    // for example, if your plugin logs into a cloud account to retrieve a device list, and a user has previously removed a device
-    // from this cloud account, then this device will no longer be present in the device list but will still be in the Homebridge cache
-    for (const [uuid, accessory] of this.accessories) {
-      if (!this.discoveredCacheUUIDs.includes(uuid)) {
-        this.log.info('Removing existing accessory from cache:', accessory.displayName);
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       }
     }
   }

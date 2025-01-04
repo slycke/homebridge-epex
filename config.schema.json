@@ -45,13 +45,13 @@
       "min_rate": {
         "title": "Minimum Rate",
         "type": "integer",
-        "default": -10000,
+        "default": -100,
         "description": "Fallback for the minimum energy price if data is missing."
       },
       "max_rate": {
         "title": "Maximum Rate",
         "type": "integer",
-        "default": 10000,
+        "default": 100,
         "description": "Fallback for the maximum energy price if data is missing."
       }
     }
