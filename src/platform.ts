@@ -135,20 +135,20 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
   /**
    * Notify accessories of the updated price.
    */
+
+  private readonly accessoryHandlers = new Map<string, EPEXPlatformAccessory>();
+
   private updateAccessories() {
     for (const accessory of this.accessories.values()) {
       // Create or retrieve the EPEXPlatformAccessory instance
-      const epexAccessory = accessory.context.epexHandler || new EPEXPlatformAccessory(this, accessory);
-
-      // Store the handler in the accessory context to avoid recreating it
-      accessory.context.epexHandler = epexAccessory;
-
-      // Update the price using the currentPrice property
-      if (this.currentPrice !== null) {
-        epexAccessory.updatePrice(this.currentPrice);
-      } else {
-        this.log.warn(`No current price available to update accessory: ${accessory.displayName}`);
+      let epexAccessory = this.accessoryHandlers.get(accessory.UUID);
+      if (!epexAccessory) {
+        epexAccessory = new EPEXPlatformAccessory(this, accessory);
+        this.accessoryHandlers.set(accessory.UUID, epexAccessory);
       }
+
+      // Update the price
+      epexAccessory.updatePrice(this.getCurrentPrice());
     }
   }
 
