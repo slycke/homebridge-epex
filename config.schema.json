@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "EPEXMonitor",
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
@@ -11,6 +11,48 @@
         "type": "string",
         "required": true,
         "default": "Example Dynamic Platform"
+      },
+      "refreshInterval": {
+        "title": "Refresh Interval (minutes)",
+        "type": "integer",
+        "default": 15,
+        "description": "How often to poll ENTSO-E for new price data (in minutes). Minimum recommended is 15."
+      },
+      "documentType": {
+        "title": "ENTSO-E Document Type",
+        "type": "string",
+        "default": "A44",
+        "description": "Defines the type of data requested (e.g., day-ahead prices)."
+      },
+      "in_Domain": {
+        "title": "In-Domain (Bidding Zone)",
+        "type": "string",
+        "default": "10YNL----------L",
+        "description": "The ENTSO-E area receiving energy (Bidding Zone Code)."
+      },
+      "out_Domain": {
+        "title": "Out-Domain (Bidding Zone)",
+        "type": "string",
+        "default": "10YNL----------L",
+        "description": "The ENTSO-E area sending energy (Bidding Zone Code)."
+      },
+      "apiKey": {
+        "title": "ENTSO-E API Key",
+        "type": "string",
+        "default": "",
+        "description": "If your ENTSO-E account requires an API key, place it here."
+      },
+      "min_rate": {
+        "title": "Minimum Rate",
+        "type": "integer",
+        "default": -10000,
+        "description": "Fallback for the minimum energy price if data is missing."
+      },
+      "max_rate": {
+        "title": "Maximum Rate",
+        "type": "integer",
+        "default": 10000,
+        "description": "Fallback for the maximum energy price if data is missing."
       }
     }
   }
