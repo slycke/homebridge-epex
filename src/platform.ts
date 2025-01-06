@@ -18,6 +18,9 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
   public readonly discoveredCacheUUIDs: string[] = [];
 
+  // all the price data - typicaly 48h (current + next day)
+  private allSlots: Array<{ start: Date; price: number }> = [];
+
   private currentPrice: number | null = null;
   private timer?: NodeJS.Timeout;
 
@@ -78,11 +81,11 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
       return;
     }
     try {
-      const now = new Date();
-      now.setUTCMinutes(0, 0, 0);
+      // use the new function:
+      const { start, end } = this.getEntsoeWindowFor48h();
+      const startDate = start;   // "YYYYMMDD0000"
+      const endDate = end;     // "YYYYMMDD0000" + 2 days if you want 48 hours
 
-      const startDate = this.toEntsoeDateString(now);
-      const endDate = this.toEntsoeDateString(new Date(now.getTime() + 60 * 60 * 1000));
       const token = this.config.apiKey || 'invalid_token';
 
       const url = 'https://web-api.tp.entsoe.eu/api' +
@@ -99,74 +102,59 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
 
       // this.log.info('Response from ENTSO-E: ' + response.data);
 
-      const price = await this.parseEPEXResponse(response.data);
-      this.setCurrentPrice(price);
+      const timeslots = await this.parseAllTimeslots(response.data);
 
-      this.log.info(`Fetched price: ${price}`);
+      this.allSlots = timeslots;
+
+      const now = Date.now();
+      let currentSlot = this.allSlots.length > 0 ? this.allSlots[0] : null;
+
+      for (let i = 0; i < this.allSlots.length; i++) {
+        const slot = this.allSlots[i];
+        const nextSlot = this.allSlots[i + 1];
+        if (!nextSlot) {
+          // If there's no next slot, we must be in the last slot
+          currentSlot = slot;
+          break;
+        }
+        // If slot.start <= now < nextSlot.start, we found our slot
+        if (slot.start.getTime() <= now && nextSlot.start.getTime() > now) {
+          currentSlot = slot;
+          break;
+        }
+      }
+
+      if (!currentSlot) {
+        // fallback if something weird happened
+        currentSlot = { start: new Date(), price: this.config.max_rate || 100 };
+      }
+
+      // Log debug info
+      this.log.info(`Current time slot is ${currentSlot.start.toISOString()}, EPEX price=${currentSlot.price}`);
+      // in Euro ct/kWh
+      this.setCurrentPrice(currentSlot.price/10);
+
+      this.log.info(`Published current EPEX Energy Price: ${this.getCurrentPrice()}`);
       this.updateAccessories();
     } catch (error) {
       this.log.error('Error fetching or parsing ENTSO-E data:', error);
     }
   }
 
-  /**
-* Parse the ENTSO-E API response to extract the price.
-*/
-  private async parseEPEXResponse(data: string): Promise<number> {
-    const result = await parseStringPromise(data, { explicitArray: false });
-    const timeSeries = result?.Publication_MarketDocument?.TimeSeries;
-  
-    if (timeSeries) {
-      // In some responses, `TimeSeries` could be an array. Here we just pick the first (or adapt as needed).
-      const series = Array.isArray(timeSeries) ? timeSeries[0] : timeSeries;
-  
-      // Likewise, Period can be an array or single object
-      const period = Array.isArray(series.Period) ? series.Period[0] : series.Period;
-      const points = Array.isArray(period.Point) ? period.Point : [period.Point];
-  
-      // Build an array of { time, price } to log
-      const timePriceArray: { time: string, price: number }[] = [];
-  
-      for (const p of points) {
-        // Example: p might have:
-        // {
-        //   position: "1",
-        //   'price.amount': "123.45"
-        // }
-  
-        // 1. Convert price to a float
-        const rawPrice = parseFloat(p['price.amount'] || '0');
-        const price = isNaN(rawPrice) ? 0 : rawPrice;
-  
-        // 2. Build a time label from the 'position' or something else
-        //    Many ENTSO-E responses simply have position #, not the exact start time
-        //    If you need the exact start time, you can compute from period.timeInterval + position
-        //    For simplicity, we just log 'position' here as the time placeholder.
-        const position = p.position || 'Unknown';
-  
-        timePriceArray.push({
-          time: position,
-          price: price,
-        });
-      }
-  
-      // Log in a matrix format suitable for copy/paste
-      // e.g., two columns: "Time,Price"
-      let matrixOutput = 'Time,Price\n';
-      for (const entry of timePriceArray) {
-        matrixOutput += `${entry.time},${entry.price}\n`;
-      }
-  
-      // Log the matrix
-      this.log.info('--- ENTSO-E Data (Time vs. Price) ---\n' + matrixOutput);
-  
-      // Return the *first* price as the main return value, same as before
-      // (Adjust if you need a different logic, e.g., average)
-      return timePriceArray.length > 0 ? timePriceArray[0].price : 0;
-    }
-  
-    // Fallback if no TimeSeries
-    return 0;
+  // Helper function that returns a start/end in the "YYYYMMDDHHmm" format for 48 hours
+  private getEntsoeWindowFor48h(): { start: string, end: string } {
+    // 1) Start at today’s midnight UTC
+    const now = new Date();
+    const todayMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+
+    // 2) The end is "todayMidnight + 48h"
+    const tomorrowMidnightPlus24 = new Date(todayMidnight.getTime() + 48 * 60 * 60 * 1000);
+
+    // 3) Convert to the ENTSO-E string
+    const startStr = this.toEntsoeDateString(todayMidnight);
+    const endStr = this.toEntsoeDateString(tomorrowMidnightPlus24);
+
+    return { start: startStr, end: endStr };
   }
 
   /**
@@ -180,6 +168,82 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
     let partial = cleaned.slice(0, 13);            // "20250106T1700"
     partial = partial.replace('T', '');            // "202501061700"
     return partial;                                // "202501061700"
+  }
+
+  /**
+ * Parse the ENTSO-E XML response for a full set of day-ahead timeslots.
+ * Returns an array of { start: Date, price: number } for each timeslot.
+ */
+  private async parseAllTimeslots(xmlData: string): Promise<Array<{ start: Date; price: number }>> {
+    // 1) Parse XML
+    const result = await parseStringPromise(xmlData, { explicitArray: false });
+    const timeSeries = result?.Publication_MarketDocument?.TimeSeries;
+
+    // If no TimeSeries, return empty
+    if (!timeSeries) {
+      this.log.warn('No TimeSeries found in ENTSO-E response');
+      return [];
+    }
+
+    // In some cases, `TimeSeries` can be an array of multiple series
+    const seriesArray = Array.isArray(timeSeries) ? timeSeries : [timeSeries];
+
+    // We'll accumulate all timeslots here
+    const allTimeslots: { start: Date; price: number }[] = [];
+
+    for (const series of seriesArray) {
+      // Each series can have multiple Periods
+      const periodArray = Array.isArray(series.Period) ? series.Period : [series.Period];
+
+      for (const per of periodArray) {
+        // The official start time of this Period
+        const periodStartStr = per.timeInterval?.start;
+        if (!periodStartStr) {
+          this.log.warn('Period missing timeInterval.start');
+          continue;
+        }
+
+        // Determine resolution (often "PT60M" for hourly, "PT15M" for quarter-hour)
+        const resolution = per.resolution || 'PT60M';
+        const minutesPerSlot = resolution === 'PT15M' ? 15 : 60; // Basic assumption
+
+        // Convert periodStartStr to a Date
+        const dtStart = new Date(periodStartStr);
+
+        // Points can be array or single
+        const points = Array.isArray(per.Point) ? per.Point : [per.Point];
+
+        for (const p of points) {
+          const rawPos = parseInt(p.position || '1', 10) - 1;
+          const rawPrice = parseFloat(p['price.amount'] || '0');
+          const price = isNaN(rawPrice) ? 0 : rawPrice;
+
+          // Compute timeslot start by adding (rawPos * minutesPerSlot) to dtStart
+          const slotStart = new Date(dtStart.getTime() + rawPos * minutesPerSlot * 60000);
+
+          allTimeslots.push({
+            start: slotStart,
+            price: price,
+          });
+        }
+      }
+    }
+
+    // Sort all timeslots by start time
+    allTimeslots.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    // 2) Log a CSV-like matrix for debugging
+    //    We'll create "ISO,Price" lines
+    let matrixOutput = 'DateTime(UTC),Price\n';
+    for (const slot of allTimeslots) {
+      const isoStr = slot.start.toISOString(); // e.g. "2025-01-07T03:00:00.000Z"
+      matrixOutput += `${isoStr},${slot.price}\n`;
+    }
+
+    this.log.info('--- ENTSO-E Full-Day Timeslots ---\n' + matrixOutput);
+
+    // 3) Return the full array
+    return allTimeslots;
   }
 
   /**
