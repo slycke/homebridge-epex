@@ -83,19 +83,21 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
 
       const startDate = this.toEntsoeDateString(now);
       const endDate = this.toEntsoeDateString(new Date(now.getTime() + 60 * 60 * 1000));
+      const token = this.config.apiKey || 'invalid_token';
 
       const url = 'https://web-api.tp.entsoe.eu/api' +
         `?documentType=${this.config.documentType || 'A44'}` +
         `&in_Domain=${this.config.in_Domain || '10YNL----------L'}` +
         `&out_Domain=${this.config.out_Domain || '10YNL----------L'}` +
         `&periodStart=${startDate}` +
-        `&periodEnd=${endDate}`;
+        `&periodEnd=${endDate}` +
+        `&securityToken=${token}`;
 
-      this.log.debug('Fetching data from ENTSO-E:', url);
+      this.log.info('Sending URL to ENTSO-E: ' + url);
 
-      const response = await axios.get(url, {
-        headers: { 'X-Api-Key': this.config.apiKey || '' },
-      });
+      const response = await axios.get(url);
+
+      // this.log.info('Response from ENTSO-E: ' + response.data);
 
       const price = await this.parseEPEXResponse(response.data);
       this.setCurrentPrice(price);
@@ -113,15 +115,57 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
   private async parseEPEXResponse(data: string): Promise<number> {
     const result = await parseStringPromise(data, { explicitArray: false });
     const timeSeries = result?.Publication_MarketDocument?.TimeSeries;
-
+  
     if (timeSeries) {
-      const period = Array.isArray(timeSeries.Period) ? timeSeries.Period[0] : timeSeries.Period;
+      // In some responses, `TimeSeries` could be an array. Here we just pick the first (or adapt as needed).
+      const series = Array.isArray(timeSeries) ? timeSeries[0] : timeSeries;
+  
+      // Likewise, Period can be an array or single object
+      const period = Array.isArray(series.Period) ? series.Period[0] : series.Period;
       const points = Array.isArray(period.Point) ? period.Point : [period.Point];
-
-      const price = parseFloat(points[0]?.['price.amount'] || '0');
-      return isNaN(price) ? 0 : price;
+  
+      // Build an array of { time, price } to log
+      const timePriceArray: { time: string, price: number }[] = [];
+  
+      for (const p of points) {
+        // Example: p might have:
+        // {
+        //   position: "1",
+        //   'price.amount': "123.45"
+        // }
+  
+        // 1. Convert price to a float
+        const rawPrice = parseFloat(p['price.amount'] || '0');
+        const price = isNaN(rawPrice) ? 0 : rawPrice;
+  
+        // 2. Build a time label from the 'position' or something else
+        //    Many ENTSO-E responses simply have position #, not the exact start time
+        //    If you need the exact start time, you can compute from period.timeInterval + position
+        //    For simplicity, we just log 'position' here as the time placeholder.
+        const position = p.position || 'Unknown';
+  
+        timePriceArray.push({
+          time: position,
+          price: price,
+        });
+      }
+  
+      // Log in a matrix format suitable for copy/paste
+      // e.g., two columns: "Time,Price"
+      let matrixOutput = 'Time,Price\n';
+      for (const entry of timePriceArray) {
+        matrixOutput += `${entry.time},${entry.price}\n`;
+      }
+  
+      // Log the matrix
+      this.log.info('--- ENTSO-E Data (Time vs. Price) ---\n' + matrixOutput);
+  
+      // Return the *first* price as the main return value, same as before
+      // (Adjust if you need a different logic, e.g., average)
+      return timePriceArray.length > 0 ? timePriceArray[0].price : 0;
     }
-
+  
+    // Fallback if no TimeSeries
     return 0;
   }
 
@@ -129,7 +173,13 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
    * Convert a date to the ENTSO-E required format (YYYYMMDDHHmm).
    */
   private toEntsoeDateString(date: Date): string {
-    return date.toISOString().replace(/[-:]/g, '').slice(0, 12) + '00';
+    // "2025-01-06T17:00:23.456Z" -> "20250106T1700"
+    const iso = date.toISOString();                // "2025-01-06T17:00:23.456Z"
+    const cleaned = iso.replace(/[-:]/g, '');      // "20250106T170023.456Z"
+    // Keep only "YYYYMMDDTHHMM" => slice(0,13) => "20250106T1700"
+    let partial = cleaned.slice(0, 13);            // "20250106T1700"
+    partial = partial.replace('T', '');            // "202501061700"
+    return partial;                                // "202501061700"
   }
 
   /**
