@@ -3,7 +3,7 @@
   "displayName": "EPEX Energy Price Monitor",
   "type": "module",
   "version": "1.0.0",
-  "private": true,
+  "private": false,
   "description": "Monitor EPEX energy prices using the ENTSO-E transparency platform API.",
   "author": "Per Slycke",
   "license": "Apache-2.0",

@@ -130,11 +130,11 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
       }
 
       // Log debug info
-      this.log.info(`Current time slot is ${currentSlot.start.toISOString()}, EPEX price=${currentSlot.price}`);
+      this.log.info(`Current time slot is ${currentSlot.start.toISOString()}, EPEX price (Euro/MWh)=${currentSlot.price}`);
       // in Euro ct/kWh
       this.setCurrentPrice(currentSlot.price/10);
 
-      this.log.info(`Published current EPEX Energy Price: ${this.getCurrentPrice()}`);
+      this.log.info(`Published current EPEX Energy Price (ct/kWh): ${this.getCurrentPrice()}`);
       this.updateAccessories();
     } catch (error) {
       this.log.error('Error fetching or parsing ENTSO-E data:', error);
