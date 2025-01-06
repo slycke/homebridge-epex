@@ -1,5 +1,5 @@
 {
-  "name": "homebridge-epex",
+  "name": "@slycke/homebridge-epex",
   "displayName": "EPEX Energy Price Monitor",
   "type": "module",
   "version": "0.0.1-beta.0",
