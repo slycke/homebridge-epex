@@ -81,17 +81,21 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
       return;
     }
     try {
-      // use the new function:
       const { start, end } = this.getEntsoeWindowFor48h();
       const startDate = start;   // "YYYYMMDD0000"
       const endDate = end;     // "YYYYMMDD0000" + 2 days if you want 48 hours
+      const documentType = 'A44'; // Defines the type of data requested (e.g., A44 = day-ahead prices)
+      // Bidding Zone (country) - should both be the same for Energy Price in a country.
+      // "The ENTSO-E area receiving (in) or sending (out) energy (Bidding Zone Code)."
+      // Defaults to NL.
+      const inOutDomain = this.config.in_Domain || '10YNL----------L'; 
 
       const token = this.config.apiKey || 'invalid_token';
 
       const url = 'https://web-api.tp.entsoe.eu/api' +
-        `?documentType=${this.config.documentType || 'A44'}` +
-        `&in_Domain=${this.config.in_Domain || '10YNL----------L'}` +
-        `&out_Domain=${this.config.out_Domain || '10YNL----------L'}` +
+        `?documentType=${documentType}` +
+        `&in_Domain=${inOutDomain}` +
+        `&out_Domain=${inOutDomain}` +
         `&periodStart=${startDate}` +
         `&periodEnd=${endDate}` +
         `&securityToken=${token}`;
@@ -232,15 +236,16 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
     // Sort all timeslots by start time
     allTimeslots.sort((a, b) => a.start.getTime() - b.start.getTime());
 
+    /*
     // 2) Log a CSV-like matrix for debugging
     //    We'll create "ISO,Price" lines
-    let matrixOutput = 'DateTime(UTC),Price\n';
+    let matrixOutput = 'DateTime(UTC),Price (ct/kWh)\n';
     for (const slot of allTimeslots) {
       const isoStr = slot.start.toISOString(); // e.g. "2025-01-07T03:00:00.000Z"
-      matrixOutput += `${isoStr},${slot.price}\n`;
+      matrixOutput += `${isoStr},${slot.price/10}\n`;
     }
-
     this.log.info('--- ENTSO-E Full-Day Timeslots ---\n' + matrixOutput);
+    */
 
     // 3) Return the full array
     return allTimeslots;

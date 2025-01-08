@@ -37,29 +37,23 @@ Because EPEX can become negative it is interesting to know when the net, actual,
 
 ## Configuration
 
-You will need to add the following example accessory configuration to your homebridge `config.json`:
-
-You need to configure the region/country from which you want to get the EPEX Eneergy Price data. This is called the Bidding Zone EIC information and you can get the codes you need here: (https://transparencyplatform.zendesk.com/hc/en-us/articles/15885757676308-Area-List-with-Energy-Identification-Code-EIC)
+### Country - EIC Bidding Zone
+You need to configure the region/country from which you want to get the EPEX Energy Price data. This is called the Bidding Zone EIC information and you can get the codes you need here: (https://transparencyplatform.zendesk.com/hc/en-us/articles/15885757676308-Area-List-with-Energy-Identification-Code-EIC)
 
 For example for the Netherlands, use: `BZN|NL`
 
-```json
-"accessories": [
-    {
-        "name": "EPEX Day Ahead Energy Price",
-        "manufacturer": "ENTSO-E EPEX Day-Ahead Price",
-        "model": "EPEX Day-Ahead Energy Price Monitor",
-        "accessory": "EPEX Day-Ahead Energy Price"
-    }
-]
-```
+### Country - EIC Bidding Zone
 
-### Configuration Explanation
+You need to obtain your own API security token on ENTSO-E in order to access the data. It is free (as in free beer) and easy enough but takes some time to do.
 
-Field | Description
------ | -----------
-**accessory** | (required) Must always be "Energy Price".
-**name** | (required) The name you want to use for the power level widget.
-**manufacturer** | (optional) This shows up in the HomeKit accessory characteristics.
-**model** | (optional) This shows up in the HomeKit accessory characteristics.
-**refreshInterval** | (optional) The refresh interval in minutes for polling ComEd. The default is 15 minutes (it can not be3 shorter than 15 minutes).
+Instructions [here](https://transparencyplatform.zendesk.com/hc/en-us/articles/12845911031188-How-to-get-security-token).
+
+### Configuration Summary
+
+| **Option**       | **Title**                                | **Type**   | **Required** | **Default**                  | **Description**                                                                                     |
+|------------------|------------------------------------------|------------|--------------|------------------------------|-----------------------------------------------------------------------------------------------------|
+| `name`           | Name                                     | string     | Yes          | EPEX Energy Price Monitor    | The name of your accessory as it will appear in Homebridge/HomeKit.                                 |
+| `refreshInterval`| Refresh Interval (minutes)               | integer    | No           | 15                           | How often (in minutes) to poll ENTSO-E for updated price data. The minimum recommended is **15**.   |
+| `in_Domain`      | Country / In-Domain (Bidding Zone)       | string     | Yes           | 10YNL----------L             | The ENTSO-E Bidding Zone Code representing the receiving energy area.                               |
+| `apiKey`         | ENTSO-E API Key                          | string     | Yes           | *(empty)*                    | If your ENTSO-E account requires an API key, enter it here.                                         |
+| `max_price`      | Maximum Price                            | integer    | No           | 100                          | Fallback for the maximum energy price if data is missing. Cannot exceed **100**.                    |

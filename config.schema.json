@@ -10,7 +10,7 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Example Dynamic Platform"
+        "default": "EPEX Energy Price Monitor"
       },
       "refreshInterval": {
         "title": "Refresh Interval (minutes)",
@@ -18,23 +18,11 @@
         "default": 15,
         "description": "How often to poll ENTSO-E for new price data (in minutes). Minimum recommended is 15."
       },
-      "documentType": {
-        "title": "ENTSO-E Document Type",
-        "type": "string",
-        "default": "A44",
-        "description": "Defines the type of data requested (e.g., day-ahead prices)."
-      },
       "in_Domain": {
-        "title": "In-Domain (Bidding Zone)",
+        "title": "Country / In-Domain (Bidding Zone)",
         "type": "string",
         "default": "10YNL----------L",
         "description": "The ENTSO-E area receiving energy (Bidding Zone Code)."
-      },
-      "out_Domain": {
-        "title": "Out-Domain (Bidding Zone)",
-        "type": "string",
-        "default": "10YNL----------L",
-        "description": "The ENTSO-E area sending energy (Bidding Zone Code)."
       },
       "apiKey": {
         "title": "ENTSO-E API Key",
@@ -46,7 +34,7 @@
         "title": "Maximum Price",
         "type": "integer",
         "default": 100,
-        "description": "Fallback for the maximum energy price if data is missing."
+        "description": "Fallback for the maximum energy price if data is missing. Can not be higher than 100."
       }
     }
   }
