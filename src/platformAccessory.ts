@@ -63,12 +63,12 @@ export class EPEXPlatformAccessory {
 
     if (currentPrice === null) {
       this.platform.log.warn(`Current price is unavailable for ${this.accessory.displayName}`);
-      throw new this.platform.api.hap.HapStatusError(
-        this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
-      );
+      //throw new this.platform.api.hap.HapStatusError(
+      //  this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
+      //);
     }
 
-    this.platform.log.debug(`Current price for ${this.accessory.displayName}: ${currentPrice}`);
+    this.platform.log.debug(`[DEBUG] Current price for ${this.accessory.displayName}: ${currentPrice}`);
     return currentPrice as CharacteristicValue;
   }
 }

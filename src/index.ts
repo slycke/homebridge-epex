@@ -1,3 +1,5 @@
+'use strict';
+
 import type { API } from 'homebridge';
 
 import { EPEXMonitor } from './platform.js';

@@ -100,7 +100,7 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
         `&periodEnd=${endDate}` +
         `&securityToken=${token}`;
 
-      this.log.info('Sending URL to ENTSO-E: ' + url);
+      // this.log.info('Sending URL to ENTSO-E: ' + url);
 
       const response = await axios.get(url);
 
@@ -134,14 +134,19 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
       }
 
       // Log debug info
-      this.log.info(`Current time slot is ${currentSlot.start.toISOString()}, EPEX price (Euro/MWh)=${currentSlot.price}`);
+      const date = new Date(currentSlot.start);
+      const formattedDate = date.toLocaleDateString('en-CA', { year: 'numeric', month: 'numeric', day: 'numeric' });
+      const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' , hour12: false });
+      this.log.info(`Current time slot (local time) is ${formattedDate} ${formattedTime} - \
+${String((parseInt(formattedTime.split(':')[0],10)+1)%24).padStart(2,'0')}:${formattedTime.split(':')[1]}, \
+EPEX price (Euro/MWh)=${currentSlot.price}`);
       // in Euro ct/kWh
       this.setCurrentPrice(currentSlot.price/10);
 
       this.log.info(`Published current EPEX Energy Price (ct/kWh): ${this.getCurrentPrice()}`);
       this.updateAccessories();
     } catch (error) {
-      this.log.error('Error fetching or parsing ENTSO-E data:', error);
+      this.log.warn('Error fetching or parsing ENTSO-E data:', error);
     }
   }
 
