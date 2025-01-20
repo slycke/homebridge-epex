@@ -10,7 +10,7 @@
   "homepage": "https://github.com/slycke/homebridge-epex#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/slycke/homebridge-epex.git"
+    "url": "git+https://github.com/slycke/homebridge-epex.git"
   },
   "bugs": {
     "url": "https://github.com/slycke/homebridge-epex/issues"
