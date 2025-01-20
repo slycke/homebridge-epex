@@ -128,17 +128,15 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
           this.log.warn(`All timeslots are in the future (now < ${timeslots[0].start.toISOString()})`);
           this.log.warn('Falling back to price=100.');
           currentSlot = fallbackSlot();
-        }
+        } else {
         // Else if the current time is after the last slot's end provided by the ENTSOE API
-        else {
           const last = timeslots[timeslots.length - 1];
           const lastSlotEnd = last.start.getTime() + 60 * 60 * 1000; // 1-hour assumption
           if (now >= lastSlotEnd) {
             this.log.warn(`All slots ended by ${last.start.toISOString()}. Falling back to price=100.`);
             currentSlot = fallbackSlot();
-          }
+          } else {
           // Otherwise, find the current slot (expected normal flow)
-          else {
             const found = timeslots.find((slot, idx) => {
               const next = timeslots[idx + 1];
               // If there is no next slot, this is the last slot -> use it
