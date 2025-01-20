@@ -18,10 +18,11 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
   public readonly discoveredCacheUUIDs: string[] = [];
 
-  // all the price data - typicaly 48h (current + next day)
+  // all the price data - typically 48h (current + next day), to be used later for triggering alerts
   private allSlots: Array<{ start: Date; price: number }> = [];
 
   private currentPrice: number | null = null;
+  private lastSlotHour: number | null = null;
   private timer?: NodeJS.Timeout;
 
   // Add a getter and setter for currentPrice
@@ -73,95 +74,142 @@ export class EPEXMonitor implements DynamicPlatformPlugin {
  * Fetch price data from the ENTSO-E API.
  */
   private async pollEPEXPrice() {
-    // Check if the API key is present in the config
+
+    // Define a fallback slot and price
+    const fallbackSlot = () => ({
+      start: new Date(),
+      // fallback: price to be published in case the API provides no data
+      // Can not be higher than 100. Set to 1000 here because all prices are in Euro/MWh but
+      // published as ct/kWh.
+      // Limitation: https://developers.homebridge.io/#/characteristic/CurrentTemperature
+      price: 1000,
+    });
+
+    let currentSlot = fallbackSlot(); // default to fallback
+
+    // Check if the API key is present in the config, if not return early with fallback data
     if (!this.config.apiKey || this.config.apiKey.trim() === '') {
       this.log.warn('ENTSO-E API key is missing. Cannot fetch energy price data.');
-      this.setCurrentPrice(this.config.max_price || 100); // Set to a fallback value
+      const priceCtKwh = currentSlot.price / 10;
+      this.setCurrentPrice(priceCtKwh);
       this.updateAccessories();
       return;
     }
+
     try {
+      // Build request window & URL
       const { start, end } = this.getEntsoeWindowFor48h();
-      const startDate = start;   // "YYYYMMDD0000"
-      const endDate = end;     // "YYYYMMDD0000" + 2 days if you want 48 hours
-      const documentType = 'A44'; // Defines the type of data requested (e.g., A44 = day-ahead prices)
-      // Bidding Zone (country) - should both be the same for Energy Price in a country.
-      // "The ENTSO-E area receiving (in) or sending (out) energy (Bidding Zone Code)."
-      // Defaults to NL.
-      const inOutDomain = this.config.in_Domain || '10YNL----------L'; 
-
+      const inOutDomain = this.config.in_Domain || '10YNL----------L';
       const token = this.config.apiKey || 'invalid_token';
+      const url = 'https://web-api.tp.entsoe.eu/api'
+        + '?documentType=A44'
+        + `&in_Domain=${inOutDomain}`
+        + `&out_Domain=${inOutDomain}`
+        + `&periodStart=${start}`
+        + `&periodEnd=${end}`
+        + `&securityToken=${token}`;
 
-      const url = 'https://web-api.tp.entsoe.eu/api' +
-        `?documentType=${documentType}` +
-        `&in_Domain=${inOutDomain}` +
-        `&out_Domain=${inOutDomain}` +
-        `&periodStart=${startDate}` +
-        `&periodEnd=${endDate}` +
-        `&securityToken=${token}`;
-
-      // this.log.info('Sending URL to ENTSO-E: ' + url);
-
+      // this.log.debug('Sending URL to ENTSO-E:', url);
       const response = await axios.get(url);
 
-      // this.log.info('Response from ENTSO-E: ' + response.data);
-
+      // this.log.debug('Response from ENTSO-E:', response.data);
       const timeslots = await this.parseAllTimeslots(response.data);
 
-      this.allSlots = timeslots;
-
       const now = Date.now();
-      let currentSlot = this.allSlots.length > 0 ? this.allSlots[0] : null;
 
-      for (let i = 0; i < this.allSlots.length; i++) {
-        const slot = this.allSlots[i];
-        const nextSlot = this.allSlots[i + 1];
-        if (!nextSlot) {
-          // If there's no next slot, we must be in the last slot
-          currentSlot = slot;
-          break;
+      // If no slots
+      if (!timeslots || timeslots.length === 0) {
+        this.log.warn('No timeslots returned by the API. Falling back to price=100.');
+        currentSlot = fallbackSlot();
+      } else {
+        // If the current time is before the first slot provided by the ENTSOE API
+        if (now < timeslots[0].start.getTime()) {
+          this.log.warn('ENTSO-E API did not return complete data!');
+          this.log.warn(`All timeslots are in the future (now < ${timeslots[0].start.toISOString()})`);
+          this.log.warn('Falling back to price=100.');
+          currentSlot = fallbackSlot();
         }
-        // If slot.start <= now < nextSlot.start, we found our slot
-        if (slot.start.getTime() <= now && nextSlot.start.getTime() > now) {
-          currentSlot = slot;
-          break;
+        // Else if the current time is after the last slot's end provided by the ENTSOE API
+        else {
+          const last = timeslots[timeslots.length - 1];
+          const lastSlotEnd = last.start.getTime() + 60 * 60 * 1000; // 1-hour assumption
+          if (now >= lastSlotEnd) {
+            this.log.warn(`All slots ended by ${last.start.toISOString()}. Falling back to price=100.`);
+            currentSlot = fallbackSlot();
+          }
+          // Otherwise, find the current slot (expected normal flow)
+          else {
+            const found = timeslots.find((slot, idx) => {
+              const next = timeslots[idx + 1];
+              // If there is no next slot, this is the last slot -> use it
+              if (!next) {
+                return true;
+              }
+              // Otherwise, return true if slot.start <= now < next.start
+              return slot.start.getTime() <= now && now < next.start.getTime();
+            });
+
+            if (!found) {
+              this.log.warn('No suitable slot found. Falling back to max price=100.');
+              currentSlot = fallbackSlot();
+            } else {
+              currentSlot = found;
+            }
+          }
         }
       }
 
-      if (!currentSlot) {
-        // fallback if something weird happened
-        currentSlot = { start: new Date(), price: this.config.max_rate || 100 };
+      const currentSlotHour = currentSlot.start.getHours();
+      const priceCtKwh = currentSlot.price / 10; // convert from Euro/MWh to ct/kWh
+
+      // Compare only the hour. If it changes, log info:
+      if (this.lastSlotHour !== currentSlotHour) {
+        this.lastSlotHour = currentSlotHour;
+        // Log the slot details in a friendly way
+        const date = new Date(currentSlot.start);
+        const formattedDate = date.toLocaleDateString('en-CA', { year: 'numeric', month: 'numeric', day: 'numeric' });
+        const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        const endHour = (parseInt(formattedTime.split(':')[0], 10) + 1) % 24;
+        const endHourStr = String(endHour).padStart(2, '0') + ':' + formattedTime.split(':')[1];
+        this.log.info(`Current time slot (local time) is ${formattedDate} ${formattedTime} - ${endHourStr}, ` +
+          `EPEX price (Euro/MWh)=${currentSlot.price}`);
+        this.log.info(`Published current EPEX Energy Price (ct/kWh): ${priceCtKwh}`);
+      } else {
+        // No hour change → optional debug
+        this.log.debug(`Still hour ${currentSlotHour}; no new log.`);
       }
 
-      // Log debug info
-      const date = new Date(currentSlot.start);
-      const formattedDate = date.toLocaleDateString('en-CA', { year: 'numeric', month: 'numeric', day: 'numeric' });
-      const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' , hour12: false });
-      this.log.info(`Current time slot (local time) is ${formattedDate} ${formattedTime} - \
-${String((parseInt(formattedTime.split(':')[0],10)+1)%24).padStart(2,'0')}:${formattedTime.split(':')[1]}, \
-EPEX price (Euro/MWh)=${currentSlot.price}`);
-      // in Euro ct/kWh
-      this.setCurrentPrice(currentSlot.price/10);
-
-      this.log.info(`Published current EPEX Energy Price (ct/kWh): ${this.getCurrentPrice()}`);
+      // Always publish the price (even if no update)
+      this.setCurrentPrice(priceCtKwh);
       this.updateAccessories();
+
     } catch (error) {
       this.log.warn('Error fetching or parsing ENTSO-E data:', error);
+      // fallback
+      currentSlot = fallbackSlot();
+      const priceCtKwh = currentSlot.price / 10;
+      this.setCurrentPrice(priceCtKwh);
+      this.updateAccessories();
     }
   }
 
   // Helper function that returns a start/end in the "YYYYMMDDHHmm" format for 48 hours
   private getEntsoeWindowFor48h(): { start: string, end: string } {
-    // 1) Start at today’s midnight UTC
+    // Start at today’s midnight UTC
     const now = new Date();
     const todayMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
 
-    // 2) The end is "todayMidnight + 48h"
-    const tomorrowMidnightPlus24 = new Date(todayMidnight.getTime() + 48 * 60 * 60 * 1000);
+    // The end is "todayMidnight + 48h"
+    const tomorrowMidnightPlus48 = new Date(todayMidnight.getTime() + 48 * 60 * 60 * 1000);
 
-    // 3) Convert to the ENTSO-E string
+    // Debug
+    this.log.debug(`[DEBUG] Current UTC time: ${now.toISOString()}`);
+    this.log.debug(`[DEBUG] Today’s midnight UTC: ${todayMidnight.toISOString()}`);
+    this.log.debug(`[DEBUG] 48 hours from today’s midnight UTC: ${tomorrowMidnightPlus48.toISOString()}`);
+
+    // Convert to the ENTSO-E string
     const startStr = this.toEntsoeDateString(todayMidnight);
-    const endStr = this.toEntsoeDateString(tomorrowMidnightPlus24);
+    const endStr = this.toEntsoeDateString(tomorrowMidnightPlus48);
 
     return { start: startStr, end: endStr };
   }
@@ -241,18 +289,16 @@ EPEX price (Euro/MWh)=${currentSlot.price}`);
     // Sort all timeslots by start time
     allTimeslots.sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    /*
-    // 2) Log a CSV-like matrix for debugging
-    //    We'll create "ISO,Price" lines
+    // Log a CSV-like matrix for debugging
+    // Create "ISO,Price" lines
     let matrixOutput = 'DateTime(UTC),Price (ct/kWh)\n';
     for (const slot of allTimeslots) {
       const isoStr = slot.start.toISOString(); // e.g. "2025-01-07T03:00:00.000Z"
       matrixOutput += `${isoStr},${slot.price/10}\n`;
     }
-    this.log.info('--- ENTSO-E Full-Day Timeslots ---\n' + matrixOutput);
-    */
+    this.log.debug('--- ENTSO-E Full-Day Timeslots ---\n' + matrixOutput);
 
-    // 3) Return the full array
+    // Return the full array
     return allTimeslots;
   }
 

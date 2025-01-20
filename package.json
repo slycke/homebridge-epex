@@ -1,8 +1,8 @@
 {
-  "name": "@slycke/homebridge-epex",
+  "name": "homebridge-epex",
   "displayName": "EPEX Energy Price Monitor",
   "type": "module",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": false,
   "description": "Monitor EPEX energy prices using the ENTSO-E transparency platform API.",
   "author": "Per Slycke",

@@ -29,12 +29,6 @@
         "type": "string",
         "default": "",
         "description": "If your ENTSO-E account requires an API key, place it here."
-      },
-      "max_price": {
-        "title": "Maximum Price",
-        "type": "integer",
-        "default": 100,
-        "description": "Fallback for the maximum energy price if data is missing. Can not be higher than 100."
       }
     }
   }
