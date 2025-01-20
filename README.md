@@ -60,7 +60,7 @@ Instructions [here](https://transparencyplatform.zendesk.com/hc/en-us/articles/1
 
 # Changelog
 
-## version 0.0.4
+## version 0.0.5
 * handle incomplete data returned from the ENTSOE API, e.g.: Energy Prices 12.1.D not available for 20th January on TP	20.01.2025 12:04 https://transparency.entsoe.eu/news/widget?id=678e3a6bc3645d7db0416fbd
 * only log on the hour (on price change), less spam in the logs
 * removed option to set fallback price in case of errors, always use max allowed (100)
